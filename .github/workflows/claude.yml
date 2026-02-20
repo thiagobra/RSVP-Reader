@@ -48,3 +48,9 @@ jobs:
           # or https://code.claude.com/docs/en/cli-reference for available options
           # claude_args: '--allowed-tools Bash(gh pr:*)'
 
+# From inside your project folder:
+mkdir -p .github/workflows
+curl -o .github/workflows/claude.yml https://raw.githubusercontent.com/anthropics/claude-code-action/main/examples/claude.yml
+git add .github/workflows/claude.yml
+git commit -m "add claude code action"
+git push

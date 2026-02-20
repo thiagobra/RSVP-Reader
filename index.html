@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="vscode-dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>⚡ RSVPReader — Speed Reading Tool</title>
+
+  <!--
+    ══════════════════════════════════════════════════════════════════
+    Change 8 — Content Security Policy
+    ──────────────────────────────────────────────────────────────────
+    • default-src 'none'     — deny everything not explicitly listed
+    • script-src 'self' cdnjs— allow our own script + PDF.js CDN only
+    • style-src 'self'       — only our own style.css, no inline styles
+    • worker-src blob:       — PDF.js spawns its worker via blob: URL
+    • connect-src 'none'     — no XHR / fetch / WebSocket
+    • object-src 'none'      — block Flash / plugins entirely
+    • base-uri 'self'        — prevent base-tag hijacking
+    • form-action 'none'     — no form submissions
+    ──────────────────────────────────────────────────────────────────
+    NOTE: require-trusted-types-for 'script' is intentionally omitted
+    because PDF.js 3.x internally uses eval() for its font-rendering
+    pipeline. Adding Trusted Types here would break PDF extraction.
+    Enable it only if you replace PDF.js with a Trusted-Types-aware
+    build (pdf.js issue #15531).
+    ══════════════════════════════════════════════════════════════════
+  -->
+  <meta http-equiv="Content-Security-Policy"
+    content="
+      default-src 'none';
+      script-src 'self' https://cdnjs.cloudflare.com;
+      style-src 'self';
+      worker-src blob: https://cdnjs.cloudflare.com;
+      connect-src 'none';
+      object-src 'none';
+      base-uri 'self';
+      form-action 'none';
+    " />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ══════════════ HEADER ══════════════ -->
+  <!--
+    Change 4: #wpm-emoji-badge has been REMOVED from this header
+    and relocated to #stage-badges inside #word-stage below.
+  -->
+  <header id="header-bar">
+    <span class="app-title">⚡ RSVPReader</span>
+    <span class="app-subtitle">Speed Reading Tool</span>
+    <div class="header-spacer"></div>
+
+    <div id="theme-switcher">
+      <span class="theme-label">Theme:</span>
+      <button class="theme-btn active" data-theme="vscode-dark">VS Dark</button>
+      <button class="theme-btn"        data-theme="solarized">Solarized</button>
+      <button class="theme-btn"        data-theme="high-contrast">Hi-Con</button>
+      <button class="theme-btn"        data-theme="light">Light</button>
+      <button class="theme-btn"        data-theme="sepia">Sepia</button>
+    </div>
+  </header>
+
+  <!-- ══════════════ TOOLBAR ══════════════ -->
+  <div id="toolbar">
+    <div class="toolbar-group">
+      <button id="btn-toc"       class="toolbar-btn" disabled>📑 TOC</button>
+      <button id="btn-bookmarks" class="toolbar-btn">🔖 Bookmarks</button>
+      <button id="btn-stats"     class="toolbar-btn">📊 Stats</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-group">
+      <button id="btn-focus"    class="toolbar-btn">🎯 Focus</button>
+      <button id="btn-shortcut" class="toolbar-btn">⌨ Keys</button>
+    </div>
+    <div class="toolbar-sep"></div>
+    <div class="toolbar-group">
+      <button id="btn-export" class="toolbar-btn">⬇ Export</button>
+      <button id="btn-import" class="toolbar-btn">⬆ Import</button>
+      <input  type="file" id="import-file-input" accept=".json" hidden />
+    </div>
+  </div>
+
+  <!-- ══════════════ UPLOAD ZONE ══════════════ -->
+  <!--
+    Change 1 (EPUB dropped): accept is now .pdf,.txt only.
+    Drop text updated accordingly.
+  -->
+  <section id="upload-zone" class="upload-expanded">
+    <div id="drop-area">
+      <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+      </svg>
+      <p class="drop-label">Drop your <strong>PDF</strong> or <strong>TXT</strong> here, or <span class="browse-link">click to browse</span></p>
+      <p class="drop-hint">Accepts .pdf and .txt files</p>
+      <input type="file" id="file-input" accept=".pdf,.txt" hidden />
+    </div>
+  </section>
+
+  <!-- ══════════════ FILE BAR ══════════════ -->
+  <div id="file-bar" class="hidden">
+    <span>📄</span>
+    <span id="file-bar-name"></span>
+    <span class="file-bar-sep">—</span>
+    <button id="change-file-btn" class="link-btn">change file</button>
+  </div>
+
+  <!-- ══════════════ LOADING OVERLAY ══════════════ -->
+  <div id="loading-overlay" class="hidden" role="dialog" aria-modal="true" aria-label="Loading file">
+    <div class="loading-card">
+      <div class="loading-card-header">
+        <span class="loading-spinner-small"></span>
+        <span id="loading-filename-display">Loading…</span>
+      </div>
+      <div class="loading-progress-track">
+        <div id="loading-progress-fill"></div>
+      </div>
+      <div class="loading-meta-row">
+        <span id="loading-page-info">Preparing…</span>
+        <span id="loading-pct-display">0%</span>
+      </div>
+      <div id="loading-log" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════ HISTORY STRIP ══════════════ -->
+  <div id="word-history-strip" class="hidden" aria-hidden="true"></div>
+
+  <!-- ══════════════ WORD STAGE ══════════════ -->
+  <main id="word-stage" aria-label="Reading stage">
+
+    <div class="stage-guide" aria-hidden="true"></div>
+    <div id="stage-vguide"   aria-hidden="true"></div>
+
+    <!--
+      Change 4 — WPM Emoji Badge + Live WPM relocated here.
+      Both badges sit in a shared absolute container (#stage-badges)
+      at the top-right corner of the reading stage, elegantly
+      side-by-side. The emoji badge was previously in #header-bar.
+    -->
+    <div id="stage-badges">
+      <!-- WPM Emoji Speed Badge (relocated from header) -->
+      <div id="wpm-emoji-badge"
+           title="Research ceiling: ~250–400 WPM full comprehension · ~900 WPM word recognition · Sweet spot for skilled readers: ~700 WPM">
+        <span id="wpm-emoji">🚶</span>
+        <span id="wpm-emoji-label">Strolling</span>
+      </div>
+      <!-- Live WPM Counter -->
+      <div id="live-wpm-badge" class="hidden" aria-hidden="true">
+        <span id="live-wpm-value">300</span>
+        <span class="live-wpm-unit">WPM</span>
+      </div>
+    </div>
+
+    <div id="stage-message">Upload a PDF or TXT to begin</div>
+
+    <!--
+      Change 3 — ADAPTIVE CHUNK DISPLAY
+      ─────────────────────────────────────────────────────────────
+      #word-display is the shared container for both modes.
+
+      Single-word mode (chunkSize = 1, default):
+        .multi-word class is ABSENT.
+        #word-left / #word-right — the ORP two-half architecture.
+        Pivot letter at exactly 50% screen centre. Vguide visible.
+
+      Multi-word mode (chunkSize > 1):
+        .multi-word class is ADDED to #word-display by JS.
+        #word-center-block — a full-width fixed container that
+        keeps the geometric centre stable regardless of chunk text
+        length (prevents the centrepoint from drifting). Vguide hidden.
+        A 25 ms cognitive-reset blank flash separates chunks.
+    -->
+    <div id="word-display" class="hidden" role="status" aria-live="polite" aria-atomic="true">
+
+      <!-- ORP two-half (single-word mode) -->
+      <div id="word-left">
+        <span id="word-before"></span><span id="word-pivot"></span>
+      </div>
+      <div id="word-right">
+        <span id="word-after"></span>
+      </div>
+
+      <!-- Geometric centre block (multi-word mode, Change 3) -->
+      <div id="word-center-block" aria-hidden="true">
+        <span id="word-center-text"></span>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ══════════════ PROGRESS WRAPPER ══════════════ -->
+  <div id="progress-wrapper">
+
+    <!--
+      Change 5 — Floating Percentage Tooltip
+      Absolutely positioned above the slider thumb.
+      left: mirrors --pct CSS variable so it tracks the thumb.
+      JS updates .textContent and .style.left in updateProgress().
+    -->
+    <div id="progress-pct-tooltip" aria-hidden="true">0%</div>
+
+    <!-- Chapter tick mark overlay -->
+    <div id="progress-chapter-markers" aria-hidden="true"></div>
+
+    <input type="range" id="progress-slider"
+      min="0" max="100" step="0.01" value="0"
+      aria-label="Reading position — drag to seek"
+      aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" />
+  </div>
+
+  <!-- ══════════════ CONTROLS ══════════════ -->
+  <footer id="controls-panel">
+
+    <div class="ctrl-group" id="group-playback">
+      <span class="group-label">Playback</span>
+      <div class="btn-row">
+        <button id="btn-restart"   title="Restart (R)">⏮</button>
+        <button id="btn-back10"    title="Back 10 (←)">⏪ −10</button>
+        <button id="btn-playpause" class="primary-btn" title="Play/Pause (Space)">▶ Play</button>
+        <button id="btn-fwd10"     title="Forward 10 (→)">+10 ⏩</button>
+        <button id="btn-end"       title="Jump to end">⏭</button>
+      </div>
+    </div>
+
+    <div class="ctrl-group" id="group-speed">
+      <label class="group-label" for="slider-wpm">Speed</label>
+      <div class="slider-row">
+        <input type="range" id="slider-wpm" min="100" max="1500" step="10" value="300" />
+        <span class="slider-readout"><span id="wpm-display">300</span> WPM</span>
+      </div>
+    </div>
+
+    <div class="ctrl-group" id="group-font">
+      <label class="group-label" for="slider-font">Font Size</label>
+      <div class="slider-row">
+        <input type="range" id="slider-font" min="16" max="420" step="2" value="64" />
+        <span class="slider-readout"><span id="font-display">64</span> px</span>
+      </div>
+    </div>
+
+    <div class="ctrl-group" id="group-fontfamily">
+      <label class="group-label" for="font-select">Font</label>
+      <select id="font-select" title="Choose reading font">
+        <option value="'Segoe UI Variable', 'Segoe UI', sans-serif">Segoe UI Variable</option>
+        <option value="Aptos, 'Segoe UI', sans-serif">Aptos</option>
+        <option value="Calibri, 'Gill Sans', sans-serif">Calibri</option>
+        <option value="Georgia, 'Times New Roman', serif">Georgia</option>
+        <option value="Constantia, Georgia, serif">Constantia</option>
+        <option value="Consolas, 'Courier New', monospace">Consolas</option>
+        <option value="'Cascadia Code', Consolas, monospace">Cascadia Code</option>
+        <option value="'Courier New', Courier, monospace" selected>Courier New</option>
+      </select>
+    </div>
+
+    <div class="ctrl-group" id="group-chunk">
+      <label class="group-label" for="slider-chunk">Words/Flash</label>
+      <div class="slider-row">
+        <input type="range" id="slider-chunk" min="1" max="5" step="1" value="1" />
+        <span class="slider-readout"><span id="chunk-display">1</span></span>
+      </div>
+    </div>
+
+    <div class="ctrl-group" id="group-position">
+      <span class="group-label">Word</span>
+      <div class="position-row">
+        <input type="number" id="word-index-input" min="1" value="1" aria-label="Jump to word" />
+        <span class="total-words">/ <span id="total-words-display">0</span></span>
+      </div>
+    </div>
+
+    <div class="ctrl-group" id="group-options">
+      <span class="group-label">Options</span>
+      <div class="options-col">
+        <label class="checkbox-label" title="Blank flash between words (adaptive ISI)">
+          <input type="checkbox" id="blank-flash-toggle" /><span>Blank flash</span>
+        </label>
+        <label class="checkbox-label" title="Smart timing: length, punctuation, rare words, sentence start">
+          <input type="checkbox" id="speed-ramp-toggle" /><span>Smart pace</span>
+        </label>
+        <label class="checkbox-label" id="tts-label" title="Read aloud — runs parallel to word flashing">
+          <input type="checkbox" id="tts-toggle" /><span>Read aloud</span>
+        </label>
+      </div>
+    </div>
+
+  </footer>
+
+  <!-- ══════════════ PANEL BACKDROP ══════════════ -->
+  <div id="panel-backdrop" class="hidden"></div>
+
+  <!-- STATS PANEL -->
+  <div id="stats-panel" class="side-panel hidden" role="complementary" aria-label="Reading Statistics">
+    <div class="panel-header">
+      <span>📊 Reading Stats</span>
+      <button class="panel-close">✕</button>
+    </div>
+    <div class="panel-body">
+      <div class="stat-item"><span class="stat-label">Words Read</span>    <span id="stat-words-read"   class="stat-value">0</span></div>
+      <div class="stat-item"><span class="stat-label">Progress</span>       <span id="stat-progress"     class="stat-value">0%</span></div>
+      <div class="stat-item"><span class="stat-label">Session Time</span>   <span id="stat-session-time" class="stat-value">0:00</span></div>
+      <div class="stat-item"><span class="stat-label">Est. Remaining</span> <span id="stat-remaining"    class="stat-value">—</span></div>
+      <div class="stat-item"><span class="stat-label">Avg WPM</span>        <span id="stat-avg-wpm"      class="stat-value">—</span></div>
+      <div class="stat-section-label">WPM History</div>
+      <canvas id="sparkline-canvas" aria-label="WPM history chart"></canvas>
+    </div>
+  </div>
+
+  <!-- TOC PANEL -->
+  <div id="toc-panel" class="side-panel hidden" role="complementary" aria-label="Table of Contents">
+    <div class="panel-header">
+      <span>📑 Table of Contents</span>
+      <button class="panel-close">✕</button>
+    </div>
+    <div class="panel-body" id="toc-list">
+      <p class="panel-empty">No chapters detected.</p>
+    </div>
+  </div>
+
+  <!-- BOOKMARKS PANEL -->
+  <div id="bookmarks-panel" class="side-panel hidden" role="complementary" aria-label="Bookmarks">
+    <div class="panel-header">
+      <span>🔖 Bookmarks</span>
+      <button class="panel-close">✕</button>
+    </div>
+    <div class="panel-body" id="bookmarks-list">
+      <p class="panel-empty">No bookmarks yet.<br>Press <kbd>B</kbd> while reading to add one.</p>
+    </div>
+  </div>
+
+  <!-- SHORTCUT MODAL -->
+  <div id="shortcut-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card shortcut-card">
+      <div class="modal-header">
+        <span>⌨ Keyboard Shortcuts</span>
+        <button id="shortcut-close" class="panel-close">✕</button>
+      </div>
+      <div class="shortcut-grid">
+        <div class="shortcut-section-label">Playback</div>
+        <div class="shortcut-row"><kbd>Space</kbd><span>Play / Pause</span></div>
+        <div class="shortcut-row"><kbd>R</kbd><span>Restart from beginning</span></div>
+        <div class="shortcut-row"><kbd>←</kbd><span>Jump back 10 words</span></div>
+        <div class="shortcut-row"><kbd>→</kbd><span>Jump forward 10 words</span></div>
+        <div class="shortcut-section-label">Speed &amp; Size</div>
+        <div class="shortcut-row"><kbd>↑</kbd><span>WPM +10</span></div>
+        <div class="shortcut-row"><kbd>↓</kbd><span>WPM −10</span></div>
+        <div class="shortcut-row"><kbd>[</kbd><span>Font size −4px</span></div>
+        <div class="shortcut-row"><kbd>]</kbd><span>Font size +4px</span></div>
+        <div class="shortcut-section-label">Panels &amp; View</div>
+        <div class="shortcut-row"><kbd>F</kbd><span>Toggle Focus Mode</span></div>
+        <div class="shortcut-row"><kbd>B</kbd><span>Add bookmark at current word</span></div>
+        <div class="shortcut-row"><kbd>?</kbd><span>Show / hide this cheatsheet</span></div>
+        <div class="shortcut-row"><kbd>ESC</kbd><span>Close panels / exit Focus Mode</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUMMARY MODAL -->
+  <div id="summary-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card summary-card">
+      <div class="modal-header"><span>🎉 Reading Complete</span></div>
+      <div class="summary-body">
+        <div class="summary-row"><span class="summary-label">Document</span>    <span id="sum-filename"  class="summary-value">—</span></div>
+        <div class="summary-row"><span class="summary-label">Total Words</span> <span id="sum-words"     class="summary-value">—</span></div>
+        <div class="summary-row"><span class="summary-label">Est. Pages</span>  <span id="sum-pages"     class="summary-value">—</span></div>
+        <div class="summary-row"><span class="summary-label">Time Spent</span>  <span id="sum-time"      class="summary-value">—</span></div>
+        <div class="summary-row"><span class="summary-label">Average WPM</span> <span id="sum-avg-wpm"   class="summary-value">—</span></div>
+        <div class="summary-row"><span class="summary-label">Peak WPM</span>    <span id="sum-peak-wpm"  class="summary-value">—</span></div>
+      </div>
+      <div class="summary-actions">
+        <button id="sum-restart" class="primary-btn">⏮ Start Over</button>
+        <button id="sum-close"   class="secondary-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIRM DIALOG -->
+  <div id="confirm-dialog" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card confirm-card">
+      <div class="confirm-message" id="confirm-message">Are you sure?</div>
+      <div class="confirm-actions">
+        <button id="confirm-yes" class="primary-btn">Confirm</button>
+        <button id="confirm-no"  class="secondary-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOCUS HINT -->
+  <div id="focus-hint" class="hidden">Press <kbd>F</kbd> or <kbd>ESC</kbd> to exit focus mode</div>
+
+  <!-- TOAST -->
+  <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+  <!--
+    PDF.js 3.11.174 loaded from cdnjs (whitelisted by CSP script-src).
+    crossorigin/integrity omitted: under file:// the browser sends
+    Origin: null which blocks CORS-gated SRI checks in some browsers,
+    causing pdfjsLib to silently never land on window.
+  -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <!-- Plain scripts — no ES modules, compatible with file:// protocol. -->
+  <script src="parser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
