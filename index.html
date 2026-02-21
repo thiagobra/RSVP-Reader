@@ -147,7 +147,7 @@
       </div>
       <!-- Live WPM Counter -->
       <div id="live-wpm-badge" class="hidden" aria-hidden="true">
-        <span id="live-wpm-value">300</span>
+        <span id="live-wpm-value">700</span>
         <span class="live-wpm-unit">WPM</span>
       </div>
     </div>
@@ -226,8 +226,8 @@
     <div class="ctrl-group" id="group-speed">
       <label class="group-label" for="slider-wpm">Speed</label>
       <div class="slider-row">
-        <input type="range" id="slider-wpm" min="100" max="1500" step="10" value="300" />
-        <span class="slider-readout"><span id="wpm-display">300</span> WPM</span>
+        <input type="range" id="slider-wpm" min="100" max="1500" step="10" value="700" />
+        <span class="slider-readout"><span id="wpm-display">700</span> WPM</span>
       </div>
     </div>
 
@@ -321,10 +321,13 @@
   <div id="bookmarks-panel" class="side-panel hidden" role="complementary" aria-label="Bookmarks">
     <div class="panel-header">
       <span>🔖 Bookmarks</span>
-      <button class="panel-close">✕</button>
+      <div class="panel-header-actions">
+        <button id="btn-add-bookmark" class="toolbar-btn" title="Add bookmark at current word">+ Add</button>
+        <button class="panel-close">✕</button>
+      </div>
     </div>
     <div class="panel-body" id="bookmarks-list">
-      <p class="panel-empty">No bookmarks yet.<br>Press <kbd>B</kbd> while reading to add one.</p>
+      <p class="panel-empty">No bookmarks yet.<br>Press <kbd>B</kbd> or tap <strong>+ Add</strong> above.</p>
     </div>
   </div>
 
@@ -386,7 +389,7 @@
   </div>
 
   <!-- FOCUS HINT -->
-  <div id="focus-hint" class="hidden">Press <kbd>F</kbd> or <kbd>ESC</kbd> to exit focus mode</div>
+  <div id="focus-hint" class="hidden">Press <kbd>F</kbd> or <kbd>ESC</kbd> to exit focus mode · Double-tap on mobile</div>
 
   <!-- TOAST -->
   <div id="toast-container" aria-live="polite" aria-atomic="false"></div>

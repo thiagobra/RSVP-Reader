@@ -439,6 +439,7 @@ button.secondary-btn:hover { background:var(--accent-hover); color:var(--btn-tex
 .side-panel { position:fixed; top:0; right:0; bottom:0; width:300px; background:var(--bg-app); border-left:1px solid var(--border); z-index:301; display:flex; flex-direction:column; box-shadow:-6px 0 24px var(--shadow); }
 .side-panel.hidden { display:none; }
 .panel-header { display:flex; align-items:center; justify-content:space-between; padding:12px 13px; border-bottom:1px solid var(--border); font-weight:600; font-size:14px; flex-shrink:0; }
+.panel-header-actions { display:flex; align-items:center; gap:6px; }
 .panel-close { background:none; border:none; color:var(--text-muted); font-size:15px; cursor:pointer; padding:2px 6px; border-radius:3px; line-height:1; }
 .panel-close:hover { background:var(--bg-panel); color:var(--text-default); border-color:transparent; }
 .panel-body { flex:1; overflow-y:auto; padding:10px; scrollbar-width:thin; }
