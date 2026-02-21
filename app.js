@@ -88,12 +88,12 @@ const state = {
   bookmarks:      [],
   currentIndex:   0,
   isPlaying:      false,
-  wpm:            300,
+  wpm:            700,
   fontSize:       64,
   fontFamily:     "'Courier New', Courier, monospace",
   chunkSize:      1,
   blankFlash:     false,
-  speedRamp:      false,
+  speedRamp:      true,
   ttsEnabled:     false,
   loaded:         false,
   fileName:       '',
@@ -192,6 +192,7 @@ const el = {
   sparklineCanvas:      document.getElementById('sparkline-canvas'),
   tocList:              document.getElementById('toc-list'),
   bookmarksList:        document.getElementById('bookmarks-list'),
+  btnAddBookmark:       document.getElementById('btn-add-bookmark'),
   shortcutModal:        document.getElementById('shortcut-modal'),
   shortcutClose:        document.getElementById('shortcut-close'),
   summaryModal:         document.getElementById('summary-modal'),
@@ -594,16 +595,57 @@ function drawSparkline() {
  */
 const _ttsQueue = [];
 
+/**
+ * Detect document language by sampling words.
+ * Returns 'pt' for Portuguese, 'en' for English (default).
+ */
+function _detectTextLanguage() {
+  if (!state.words.length) return 'en';
+  const PT_MARKERS = new Set([
+    'de','da','do','das','dos','que','em','um','uma','não','nao','para','com',
+    'por','mais','como','seu','sua','pelo','pela','são','sao','ele','ela',
+    'isso','este','esta','esse','essa','entre','quando','muito','também',
+    'tambem','já','ja','nos','nas','aos','ter','pode','foi','será','sera',
+    'fazer','onde','até','ate','sobre','ainda','depois','então','entao',
+    'mesmo','outro','outra','todos','todas','havia','porque','aqui','seus',
+    'suas','você','voce','meu','minha','nosso','nossa','qual','quais'
+  ]);
+  /* Sample up to 500 real words evenly across the document */
+  const real = state.words.filter(w => w !== PARA_BREAK_TOKEN);
+  const step = Math.max(1, Math.floor(real.length / 500));
+  let ptHits = 0, total = 0;
+  for (let i = 0; i < real.length; i += step) {
+    const w = real[i].toLowerCase().replace(/[^a-záàâãéèêíïóôõúüç]/g, '');
+    if (w.length < 2) continue;
+    total++;
+    if (PT_MARKERS.has(w)) ptHits++;
+  }
+  return (total > 0 && ptHits / total > 0.06) ? 'pt' : 'en';
+}
+
+function _pickTtsVoice() {
+  if (!state.ttsSupported) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices.length) return;
+
+  const lang = _detectTextLanguage();
+
+  if (lang === 'pt') {
+    const localPt = voices.filter(v => v.localService === true && v.lang.startsWith('pt'));
+    const anyPt   = voices.filter(v => v.lang.startsWith('pt'));
+    state.ttsVoice = localPt[0] || anyPt[0] || voices[0] || null;
+  } else {
+    const localEn = voices.filter(v => v.localService === true && v.lang.startsWith('en'));
+    const anyLocal = voices.filter(v => v.localService === true);
+    const anyEn   = voices.filter(v => v.lang.startsWith('en'));
+    state.ttsVoice = localEn[0] || anyLocal[0] || anyEn[0] || voices[0] || null;
+  }
+}
+
 function initTtsVoice() {
   if (!state.ttsSupported) return;
   const tryPick = () => {
-    const voices   = window.speechSynthesis.getVoices();
-    if (!voices.length) return;
-    // Priority: local English → any local → any English → first available
-    const localEn  = voices.filter(v => v.localService === true && v.lang.startsWith('en'));
-    const anyLocal = voices.filter(v => v.localService === true);
-    const anyEn    = voices.filter(v => v.lang.startsWith('en'));
-    state.ttsVoice = localEn[0] || anyLocal[0] || anyEn[0] || voices[0] || null;
+    _pickTtsVoice();
   };
   tryPick();
   window.speechSynthesis.addEventListener('voiceschanged', tryPick);
@@ -1018,6 +1060,8 @@ async function doLoadFile(file) {
     renderChunk(0);
     updateProgress();
     updateLiveWpmBadge();
+    /* Re-pick TTS voice now that words are loaded (language detection) */
+    _pickTtsVoice();
 
     toast(`✓ Loaded ${realWords.length.toLocaleString()} words` +
           (result.chapters.length ? ` · ${result.chapters.length} chapters` : ''));
@@ -1177,6 +1221,7 @@ document.querySelectorAll('.panel-close').forEach(btn => btn.addEventListener('c
 el.btnStats.addEventListener(    'click', () => openPanel('stats-panel'));
 el.btnToc.addEventListener(      'click', () => openPanel('toc-panel'));
 el.btnBookmarks.addEventListener('click', () => openPanel('bookmarks-panel'));
+el.btnAddBookmark.addEventListener('click', () => addBookmark());
 
 /* ══════════════════════════════════════════════════
    SHORTCUT MODAL
@@ -1191,18 +1236,36 @@ el.shortcutModal.addEventListener('click', e => {
 /* ══════════════════════════════════════════════════
    FOCUS MODE
    ══════════════════════════════════════════════════ */
+/** Request browser fullscreen (best-effort, ignores errors). */
+function _requestFullscreen() {
+  const el = document.documentElement;
+  const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+  if (rfs) {
+    try { rfs.call(el); } catch (_) { /* user gesture required — ignore */ }
+  }
+}
+/** Exit browser fullscreen if active. */
+function _exitFullscreen() {
+  const efs = document.exitFullscreen || document.webkitExitFullscreen || document.msExitFullscreen;
+  if (efs && (document.fullscreenElement || document.webkitFullscreenElement)) {
+    try { efs.call(document); } catch (_) { /* ignore */ }
+  }
+}
+
 function toggleFocusMode() {
   state.focusActive = !state.focusActive;
   document.body.classList.toggle('focus-mode', state.focusActive);
   el.btnFocus.classList.toggle('active', state.focusActive);
   clearTimeout(state.focusHintTimer);
   if (state.focusActive) {
+    _requestFullscreen();
     el.focusHint.classList.remove('hidden', 'fading');
     state.focusHintTimer = setTimeout(() => {
       el.focusHint.classList.add('fading');
       setTimeout(() => el.focusHint.classList.add('hidden'), 500);
     }, 3500);
   } else {
+    _exitFullscreen();
     el.focusHint.classList.add('hidden');
   }
 }
@@ -1213,7 +1276,19 @@ function exitFocusMode() {
   el.btnFocus.classList.remove('active');
   el.focusHint.classList.add('hidden');
   clearTimeout(state.focusHintTimer);
+  _exitFullscreen();
 }
+
+/* Sync state if user exits fullscreen via browser controls (e.g. swipe down) */
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement && state.focusActive) {
+    state.focusActive = false;
+    document.body.classList.remove('focus-mode');
+    el.btnFocus.classList.remove('active');
+    el.focusHint.classList.add('hidden');
+    clearTimeout(state.focusHintTimer);
+  }
+});
 el.btnFocus.addEventListener('click', toggleFocusMode);
 
 /* ══════════════════════════════════════════════════
@@ -1281,6 +1356,9 @@ el.fontSelect.addEventListener('change', () => applyFont(el.fontSelect.value));
    TOUCH / SWIPE
    ══════════════════════════════════════════════════ */
 const SWIPE_T = 50;
+let _lastTapTime = 0;
+const DOUBLE_TAP_MS = 350;
+
 el.wordStage.addEventListener('touchstart', e => {
   state.touchStartX = e.touches[0].clientX;
   state.touchStartY = e.touches[0].clientY;
@@ -1288,7 +1366,16 @@ el.wordStage.addEventListener('touchstart', e => {
 el.wordStage.addEventListener('touchend', e => {
   const dx = e.changedTouches[0].clientX - state.touchStartX;
   const dy = e.changedTouches[0].clientY - state.touchStartY;
-  if (Math.abs(dx) < SWIPE_T && Math.abs(dy) < SWIPE_T) togglePlayPause();
+  if (Math.abs(dx) < SWIPE_T && Math.abs(dy) < SWIPE_T) {
+    const now = Date.now();
+    if (now - _lastTapTime < DOUBLE_TAP_MS) {
+      /* Double-tap: exit focus mode (mobile has no ESC key) */
+      _lastTapTime = 0;
+      if (state.focusActive) { exitFocusMode(); return; }
+    }
+    _lastTapTime = now;
+    togglePlayPause();
+  }
   else if (Math.abs(dx) > Math.abs(dy)) { if (dx < 0) jumpWords(+10); else jumpWords(-10); }
 }, { passive: true });
 
@@ -1450,6 +1537,9 @@ function escHtml(s) {
     el.ttsToggle.disabled     = true;
     el.ttsLabel.title         = 'TTS not supported in this browser';
   }
+
+  /* Smart pace on by default */
+  el.speedRampToggle.checked = state.speedRamp;
 
   applyFont(el.fontSelect.value);
   initTtsVoice();
